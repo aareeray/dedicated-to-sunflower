@@ -215,49 +215,90 @@ function parseYtData(jsonStr: string): Song[] {
   return songs;
 }
 
+const LOCAL_ALBUM_ID = 'local-uploads';
+
+// Use Vite's glob import to get all opus files in the assets/songs directory
+const localSongFiles = import.meta.glob('../assets/songs/*.opus', { eager: true, as: 'url' });
+
+function getLocalSongs(): Song[] {
+  return Object.entries(localSongFiles).map(([path, url], index) => {
+    // Extract filename without extension for the title
+    const filename = path.split('/').pop()?.replace('.opus', '') || `Local Track ${index + 1}`;
+    const title = filename.split('-').pop()?.trim() || filename;
+
+    return {
+      file: url,
+      title: title,
+      track: index + 1,
+      src: url,
+      videoId: '', // Not a YouTube video
+      thumbnail: '', // Will use album cover
+    };
+  });
+}
+
 export const loadMusicLibrary = async (): Promise<Album[]> => {
+  const allAlbums: Album[] = [];
+
+  // 1. Load Local Songs if any exist
+  const localSongs = getLocalSongs();
+  if (localSongs.length > 0) {
+    allAlbums.push({
+      id: LOCAL_ALBUM_ID,
+      folder: 'local-songs',
+      artist: 'Local Uploads',
+      title: 'My Uploaded Songs',
+      year: '2026',
+      coverImage: '', 
+      coverSrc: '/src/assets/Li-Zhi.png', // Default cover for local songs
+      tracks: localSongs.length,
+      songs: localSongs,
+    });
+  }
+
+  // 2. Load YouTube Playlist
   try {
     console.log('[musicService] Fetching YouTube playlist via Piped API...');
     
-    let songs: Song[] = [];
+    let ytSongs: Song[] = [];
     
     try {
-      songs = await fetchPlaylistFromPiped(PLAYLIST_ID);
+      ytSongs = await fetchPlaylistFromPiped(PLAYLIST_ID);
     } catch (e) {
       console.warn('[musicService] Piped API failed, falling back to scraping...', e);
-      const html = await fetchPlaylistPage();
-      songs = extractSongsFromHtml(html);
+      try {
+        const html = await fetchPlaylistPage();
+        ytSongs = extractSongsFromHtml(html);
+      } catch (scrapingError) {
+        console.warn('[musicService] Scraping failed too', scrapingError);
+      }
     }
 
-    if (songs.length === 0) {
-      console.warn('[musicService] No songs extracted from playlist');
-      return [];
+    if (ytSongs.length > 0) {
+      const coverSrc = ytSongs[0]?.thumbnail ?? '';
+      allAlbums.push({
+        id: PLAYLIST_ID,
+        folder: 'youtube-playlist',
+        artist: 'Ayaan Ji',
+        title: 'Dedicated to Sunflower by Ayaan Ji',
+        year: new Date().getFullYear().toString(),
+        coverImage: coverSrc,
+        coverSrc,
+        tracks: ytSongs.length,
+        songs: ytSongs,
+      });
     }
-
-    const coverSrc = songs[0]?.thumbnail ?? '';
-
-    const album: Album = {
-      id: PLAYLIST_ID,
-      folder: 'youtube-playlist',
-      artist: 'Ayaan Ji',
-      title: 'Dedicated to Sunflower by Ayaan Ji',
-      year: new Date().getFullYear().toString(),
-      coverImage: coverSrc,
-      coverSrc,
-      tracks: songs.length,
-      songs,
-    };
-
-    console.log(`[musicService] Loaded ${songs.length} songs`);
-    return [album];
 
   } catch (error) {
-    console.error('[musicService] Failed to load playlist:', error);
+    console.error('[musicService] Failed to load YouTube playlist:', error);
+  }
 
-    // Fallback: return a minimal album with just the playlist embedded
-    // so the YouTube iframe can still load the playlist
+  // If no albums loaded at all (even local), return fallback
+  if (allAlbums.length === 0) {
     return getFallbackAlbum();
   }
+
+  return allAlbums;
 };
 
 // Fallback: if scraping fails, provide known videos from the playlist
