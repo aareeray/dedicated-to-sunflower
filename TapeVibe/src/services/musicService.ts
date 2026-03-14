@@ -44,10 +44,10 @@ async function fetchPlaylistPage(): Promise<string> {
       const encodedUrl = encodeURIComponent(PLAYLIST_URL);
       const proxyUrl = proxy + encodedUrl;
       console.log(`[musicService] Trying proxy: ${proxy}`);
-      
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
-      
+
       const res = await fetch(proxyUrl, {
         headers: { 'Accept': 'text/html,application/xhtml+xml' },
         signal: controller.signal
@@ -75,7 +75,7 @@ async function fetchPlaylistPage(): Promise<string> {
 
 function extractSongsFromHtml(html: string): Song[] {
   console.log('[musicService] Extracting ytInitialData...');
-  
+
   // Try multiple regex patterns to find ytInitialData
   const patterns = [
     /var ytInitialData\s*=\s*(\{[\s\S]+?\});\s*(?:var |<\/script>)/,
@@ -105,10 +105,10 @@ function extractSongsFromHtml(html: string): Song[] {
     const videoId = match[1];
     if (seenIds.has(videoId)) continue;
     seenIds.add(videoId);
-    
+
     // Try to find a title near this videoId
     const vicinity = html.substring(Math.max(0, match.index! - 50), match.index! + 300);
-    const titleMatch = vicinity.match(/"text":\s*"([^"]{3,100})"/);   
+    const titleMatch = vicinity.match(/"text":\s*"([^"]{3,100})"/);
     const title = titleMatch?.[1] ?? `Track ${++index}`;
 
     directSongs.push({
@@ -198,7 +198,7 @@ export const loadMusicLibrary = async (): Promise<Album[]> => {
       id: PLAYLIST_ID,
       folder: 'youtube-playlist',
       artist: 'Ayaan Ji',
-      title: 'Ayaan Ji — Playlist',
+      title: 'Dedicated to Sunflower by Ayaan Ji',
       year: new Date().getFullYear().toString(),
       coverImage: coverSrc,
       coverSrc,

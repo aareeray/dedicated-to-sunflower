@@ -127,7 +127,22 @@ function createYTPlayer(videoId: string) {
       },
       onError: (e: any) => {
         console.error('[YT] Player error:', e.data);
-        playerStore.pause();
+        if (e.data === 150 || e.data === 101 || e.data === 100) {
+          console.warn('[YT] Track restricted or unavailable. Skipping to next...');
+          
+          // Show user-friendly toast
+          const toast = document.createElement('div');
+          toast.style.cssText = 'position:fixed;top:140px;left:50%;transform:translateX(-50%);background:rgba(255,69,0,0.9);color:#fff;padding:12px 24px;border-radius:30px;z-index:999999;font-weight:bold;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+          toast.innerText = 'Track restricted by YouTube. Skipping...';
+          document.body.appendChild(toast);
+          
+          setTimeout(() => {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+            playerStore.nextTrack();
+          }, 3000); 
+        } else {
+          playerStore.pause();
+        }
       }
     }
   });
