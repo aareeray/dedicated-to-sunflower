@@ -218,7 +218,8 @@ function parseYtData(jsonStr: string): Song[] {
 const LOCAL_ALBUM_ID = 'local-uploads';
 
 // Use Vite's glob import to get all opus files in the assets/songs directory
-const localSongFiles = import.meta.glob('../assets/songs/*.opus', { eager: true, as: 'url' });
+// NOTE: 'as: url' was removed in Vite 5 — use query + import instead
+const localSongFiles = import.meta.glob('../assets/songs/*.opus', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
 function getLocalSongs(): Song[] {
   return Object.entries(localSongFiles).map(([path, url], index) => {
@@ -243,14 +244,16 @@ export const loadMusicLibrary = async (): Promise<Album[]> => {
   // 1. Load Local Songs if any exist
   const localSongs = getLocalSongs();
   if (localSongs.length > 0) {
+    // Import the default cover image properly so Vite processes it for production
+    const defaultCoverUrl = new URL('../assets/Li-Zhi.png', import.meta.url).href;
     allAlbums.push({
       id: LOCAL_ALBUM_ID,
       folder: 'local-songs',
       artist: 'Local Uploads',
       title: 'My Uploaded Songs',
       year: '2026',
-      coverImage: '', 
-      coverSrc: '/src/assets/Li-Zhi.png', // Default cover for local songs
+      coverImage: '',
+      coverSrc: defaultCoverUrl, // Vite-resolved asset URL
       tracks: localSongs.length,
       songs: localSongs,
     });
