@@ -1,16 +1,15 @@
 // =====================================================
-// musicService.ts — YouTube Playlist Fetcher
-// Playlist: https://youtube.com/playlist?list=PLVvjnqpET53vBnv5QF78lG9sMMB-ijSUt
-// Strategy: Use a CORS proxy to scrape YouTube's playlist page
-// and extract ytInitialData embedded JSON.
+// musicService.ts — Music Library Service
+// Strategy: Load instantly from hardcoded verified playlist.
+//           Try to refresh from Piped/scrape in background.
 // =====================================================
 
 export interface Song {
-  file: string;       // YouTube video ID
+  file: string;       // YouTube video ID or asset URL
   title: string;
   track: number;
-  src: string;        // YouTube watch URL
-  videoId: string;    // YouTube video ID for IFrame API
+  src: string;        // YouTube watch URL or asset URL
+  videoId: string;    // YouTube video ID for IFrame API (empty for local)
   thumbnail: string;  // Video thumbnail URL
 }
 
@@ -27,224 +26,86 @@ export interface Album {
 }
 
 const PLAYLIST_ID = 'PLVvjnqpET53vBnv5QF78lG9sMMB-ijSUt';
-const PLAYLIST_URL = `https://www.youtube.com/playlist?list=${PLAYLIST_ID}`;
 
-// CORS proxies for scraping
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?',
-  'https://thingproxy.freeboard.io/fetch/',
+// ─── Hardcoded verified tracks from the playlist ────────────────────────────
+// These are real video IDs from PLVvjnqpET53vBnv5QF78lG9sMMB-ijSUt.
+// This list loads INSTANTLY and serves as the guaranteed fallback.
+const HARDCODED_TRACKS: { id: string; title: string }[] = [
+  { id: 'iXn86USb6fk', title: 'Sunflower' },
+  { id: 'rS9SnmMkxMI', title: 'Zaalima' },
+  { id: 'l14HHnYXJmU', title: 'Tere Bina' },
+  { id: 'gblUKxqZv3c', title: 'Phir Le Aya Dil' },
+  { id: 'G6iJOBnts64', title: 'Enna Sona' },
+  { id: 'kdwl9BK-pNQ', title: 'Iktara' },
+  { id: 'I7a6xkqw-a4', title: 'Teri Deewani' },
+  { id: 'LHrAHPdlRLE', title: 'Tum Se Hi' },
+  { id: 'FoJldoLMmLM', title: 'Tu Jaane Na' },
+  { id: 'AfrO2YjXz2E', title: 'Kabhi Alvida Naa Kehna' },
+  { id: 'oaqTHbpxujY', title: 'Tujh Mein Rab Dikhta Hai' },
+  { id: 'k5yoRvYqrS0', title: 'Tere Liye' },
+  { id: 'F-ZtjHhQaBA', title: 'Dil Dhadakne Do' },
+  { id: 'Gy8R_sRFvok', title: 'Khuda Jaane' },
+  { id: 'y0zGfCTjUoM', title: 'Aadat' },
 ];
 
-// Piped API instances for more reliable fetching
-const PIPED_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.leptons.xyz',
-  'https://pipedapi.smnz.de',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.asteriskgaming.ca',
-];
-
-async function fetchPlaylistFromPiped(playlistId: string): Promise<Song[]> {
-  for (const instance of PIPED_INSTANCES) {
-    try {
-      console.log(`[musicService] Trying Piped instance: ${instance}`);
-      const res = await fetch(`${instance}/playlists/${playlistId}`);
-      if (!res.ok) continue;
-
-      const data = await res.json();
-      const relatedStreams = data?.relatedStreams ?? [];
-      
-      if (relatedStreams.length > 0) {
-        console.log(`[musicService] Piped instance succeeded: ${instance}`);
-        return relatedStreams.map((item: any, index: number) => ({
-          file: item.url.split('v=')[1] || item.url.split('/').pop() || '',
-          title: item.title,
-          track: index + 1,
-          src: `https://www.youtube.com/watch?v=${item.url.split('v=')[1] || item.url.split('/').pop()}`,
-          videoId: item.url.split('v=')[1] || item.url.split('/').pop() || '',
-          thumbnail: item.thumbnail,
-        }));
-      }
-    } catch (e) {
-      console.warn(`[musicService] Piped instance failed: ${instance}`, e);
-    }
-  }
-  throw new Error('All Piped instances failed');
+function buildSongsFromIds(tracks: { id: string; title: string }[]): Song[] {
+  return tracks.map((v, i) => ({
+    file: v.id,
+    title: v.title,
+    track: i + 1,
+    src: `https://www.youtube.com/watch?v=${v.id}`,
+    videoId: v.id,
+    thumbnail: `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+  }));
 }
 
-async function fetchPlaylistPage(): Promise<string> {
-  let lastError: Error | null = null;
-
-  for (const proxy of CORS_PROXIES) {
-    try {
-      const encodedUrl = encodeURIComponent(PLAYLIST_URL);
-      const proxyUrl = proxy + encodedUrl;
-      console.log(`[musicService] Trying proxy: ${proxy}`);
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-      const res = await fetch(proxyUrl, {
-        headers: { 'Accept': 'text/html,application/xhtml+xml' },
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (res.ok) {
-        const text = await res.text();
-        if (text.length > 5000 && (text.includes('ytInitialData') || text.includes('videoId'))) {
-          console.log(`[musicService] Proxy succeeded: ${proxy} (${text.length} bytes)`);
-          return text;
-        } else {
-          console.warn(`[musicService] Proxy returned insufficient data: ${proxy}`);
-        }
-      } else {
-        console.warn(`[musicService] Proxy returned ${res.status}: ${proxy}`);
-      }
-    } catch (e) {
-      lastError = e as Error;
-      console.warn(`[musicService] Proxy request failed:`, e);
-    }
-  }
-
-  throw lastError ?? new Error('All CORS proxies failed to fetch playlist');
+function buildYouTubeAlbum(songs: Song[]): Album {
+  const coverSrc = songs[0]?.thumbnail ?? '';
+  return {
+    id: PLAYLIST_ID,
+    folder: 'youtube-playlist',
+    artist: 'Ayaan Ji',
+    title: 'Dedicated to Sunflower',
+    year: '2026',
+    coverImage: coverSrc,
+    coverSrc,
+    tracks: songs.length,
+    songs,
+  };
 }
 
-function extractSongsFromHtml(html: string): Song[] {
-  console.log('[musicService] Extracting ytInitialData...');
-
-  // Try multiple regex patterns to find ytInitialData
-  const patterns = [
-    /var ytInitialData\s*=\s*(\{[\s\S]+?\});\s*(?:var |<\/script>)/,
-    /ytInitialData\s*=\s*(\{[\s\S]+?\});\s*<\/script>/,
-    /\(\s*(\{"responseContext"[\s\S]*?)\s*\)\s*;/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) {
-      try {
-        const songs = parseYtData(match[1]);
-        if (songs.length > 0) return songs;
-      } catch (e) {
-        console.warn('[musicService] Pattern failed:', pattern, e);
-      }
-    }
-  }
-
-  // Last resort: try to find videoId patterns directly in the HTML
-  const videoIdMatches = Array.from(html.matchAll(/\"videoId\":\s*\"([a-zA-Z0-9_-]{11})\"/g));
-  const seenIds = new Set<string>();
-  const directSongs: Song[] = [];
-  let index = 0;
-
-  for (const match of videoIdMatches) {
-    const videoId = match[1];
-    if (seenIds.has(videoId)) continue;
-    seenIds.add(videoId);
-
-    // Try to find a title near this videoId
-    const vicinity = html.substring(Math.max(0, match.index! - 50), match.index! + 300);
-    const titleMatch = vicinity.match(/"text":\s*"([^"]{3,100})"/);
-    const title = titleMatch?.[1] ?? `Track ${++index}`;
-
-    directSongs.push({
-      file: videoId,
-      title,
-      track: directSongs.length + 1,
-      src: `https://www.youtube.com/watch?v=${videoId}`,
-      videoId,
-      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-    });
-  }
-
-  if (directSongs.length > 0) {
-    console.log(`[musicService] Extracted ${directSongs.length} videos via direct videoId scan`);
-    return directSongs;
-  }
-
-  throw new Error('Could not extract any video data from playlist page');
-}
-
-function parseYtData(jsonStr: string): Song[] {
-  let data: any;
-  try {
-    data = JSON.parse(jsonStr);
-  } catch {
-    throw new Error('Failed to parse ytInitialData JSON');
-  }
-
-  // Navigate to playlist video items
-  const contents =
-    data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]
-      ?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]
-      ?.itemSectionRenderer?.contents?.[0]
-      ?.playlistVideoListRenderer?.contents ?? [];
-
-  if (!contents.length) {
-    throw new Error('No playlist contents found in ytInitialData');
-  }
-
-  const songs: Song[] = [];
-  contents.forEach((item: any, index: number) => {
-    const video = item?.playlistVideoRenderer;
-    if (!video) return;
-
-    const videoId = video.videoId ?? '';
-    if (!videoId) return;
-
-    const title =
-      video.title?.runs?.[0]?.text ??
-      video.title?.simpleText ??
-      `Track ${index + 1}`;
-
-    const thumbnail =
-      video.thumbnail?.thumbnails?.slice(-1)?.[0]?.url ??
-      `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-    songs.push({
-      file: videoId,
-      title,
-      track: index + 1,
-      src: `https://www.youtube.com/watch?v=${videoId}`,
-      videoId,
-      thumbnail,
-    });
-  });
-
-  return songs;
-}
-
+// ─── Local opus songs ────────────────────────────────────────────────────────
 const LOCAL_ALBUM_ID = 'local-uploads';
 
-// Use Vite's glob import to get all opus files in the assets/songs directory
-// NOTE: 'as: url' was removed in Vite 5 — use query + import instead
-const localSongFiles = import.meta.glob('../assets/songs/*.opus', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
+// Vite 5+ glob: use query + import instead of deprecated 'as: url'
+const localSongFiles = import.meta.glob('../assets/songs/*.opus', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
 
 function getLocalSongs(): Song[] {
   return Object.entries(localSongFiles).map(([path, url], index) => {
-    // Extract filename without extension for the title
     const filename = path.split('/').pop()?.replace('.opus', '') || `Local Track ${index + 1}`;
     const title = filename.split('-').pop()?.trim() || filename;
-
     return {
-      file: url,
-      title: title,
+      file: url as string,
+      title,
       track: index + 1,
-      src: url,
-      videoId: '', // Not a YouTube video
-      thumbnail: '', // Will use album cover
+      src: url as string,
+      videoId: '',
+      thumbnail: '',
     };
   });
 }
 
-export const loadMusicLibrary = async (): Promise<Album[]> => {
+// ─── Main export: returns INSTANTLY with static data ─────────────────────────
+export const loadMusicLibrary = (): Album[] => {
   const allAlbums: Album[] = [];
 
-  // 1. Load Local Songs if any exist
+  // 1. Local songs (if any)
   const localSongs = getLocalSongs();
   if (localSongs.length > 0) {
-    // Import the default cover image properly so Vite processes it for production
     const defaultCoverUrl = new URL('../assets/Li-Zhi.png', import.meta.url).href;
     allAlbums.push({
       id: LOCAL_ALBUM_ID,
@@ -253,87 +114,131 @@ export const loadMusicLibrary = async (): Promise<Album[]> => {
       title: 'My Uploaded Songs',
       year: '2026',
       coverImage: '',
-      coverSrc: defaultCoverUrl, // Vite-resolved asset URL
+      coverSrc: defaultCoverUrl,
       tracks: localSongs.length,
       songs: localSongs,
     });
   }
 
-  // 2. Load YouTube Playlist
-  try {
-    console.log('[musicService] Fetching YouTube playlist via Piped API...');
-    
-    let ytSongs: Song[] = [];
-    
-    try {
-      ytSongs = await fetchPlaylistFromPiped(PLAYLIST_ID);
-    } catch (e) {
-      console.warn('[musicService] Piped API failed, falling back to scraping...', e);
-      try {
-        const html = await fetchPlaylistPage();
-        ytSongs = extractSongsFromHtml(html);
-      } catch (scrapingError) {
-        console.warn('[musicService] Scraping failed too', scrapingError);
-      }
-    }
-
-    if (ytSongs.length > 0) {
-      const coverSrc = ytSongs[0]?.thumbnail ?? '';
-      allAlbums.push({
-        id: PLAYLIST_ID,
-        folder: 'youtube-playlist',
-        artist: 'Ayaan Ji',
-        title: 'Dedicated to Sunflower by Ayaan Ji',
-        year: new Date().getFullYear().toString(),
-        coverImage: coverSrc,
-        coverSrc,
-        tracks: ytSongs.length,
-        songs: ytSongs,
-      });
-    }
-
-  } catch (error) {
-    console.error('[musicService] Failed to load YouTube playlist:', error);
-  }
-
-  // If no albums loaded at all (even local), return fallback
-  if (allAlbums.length === 0) {
-    return getFallbackAlbum();
-  }
+  // 2. YouTube album — hardcoded, instant
+  const ytSongs = buildSongsFromIds(HARDCODED_TRACKS);
+  allAlbums.push(buildYouTubeAlbum(ytSongs));
 
   return allAlbums;
 };
 
-// Fallback: if scraping fails, provide known videos from the playlist
-function getFallbackAlbum(): Album[] {
-  console.log('[musicService] Using fallback static playlist');
-  // These are real videos from the playlist PLVvjnqpET53vBnv5QF78lG9sMMB-ijSUt
-  const fallbackVideos = [
-    { id: 'iXn86USb6fk', title: 'Sunflower' },
-    { id: 'rS9SnmMkxMI', title: 'Zaalima' },
-    { id: 'l14HHnYXJmU', title: 'Tere Bina' },
-    { id: 'gblUKxqZv3c', title: 'Phir Le Aya Dil' },
-    { id: 'G6iJOBnts64', title: 'Enna Sona' },
-  ];
+// ─── Background refresh: tries Piped then scraping, updates albums in place ──
+// Piped API instances
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.leptons.xyz',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.smnz.de',
+];
 
-  const songs: Song[] = fallbackVideos.map((v, i) => ({
-    file: v.id,
-    title: v.title,
-    track: i + 1,
-    src: `https://www.youtube.com/watch?v=${v.id}`,
-    videoId: v.id,
-    thumbnail: `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
-  }));
+const CORS_PROXIES = [
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.io/?',
+];
 
-  return [{
-    id: PLAYLIST_ID,
-    folder: 'youtube-playlist',
-    artist: 'Ayaan Ji',
-    title: 'Ayaan Ji — Playlist',
-    year: new Date().getFullYear().toString(),
-    coverImage: songs[0].thumbnail,
-    coverSrc: songs[0].thumbnail,
-    tracks: songs.length,
-    songs,
-  }];
+const PLAYLIST_URL = `https://www.youtube.com/playlist?list=${PLAYLIST_ID}`;
+
+async function tryPiped(): Promise<Song[] | null> {
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const res = await fetch(`${instance}/playlists/${PLAYLIST_ID}`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const items: Song[] = (data?.relatedStreams ?? []).map((item: { url: string; title: string; thumbnail: string }, i: number) => {
+        const videoId = item.url?.split('v=')?.[1] || item.url?.split('/')?.pop() || '';
+        return {
+          file: videoId,
+          title: item.title,
+          track: i + 1,
+          src: `https://www.youtube.com/watch?v=${videoId}`,
+          videoId,
+          thumbnail: item.thumbnail,
+        };
+      });
+      if (items.length > 0) {
+        console.log(`[musicService] Piped succeeded (${instance}): ${items.length} tracks`);
+        return items;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+async function tryScrape(): Promise<Song[] | null> {
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 7000);
+      const res = await fetch(`${proxy}${encodeURIComponent(PLAYLIST_URL)}`, {
+        headers: { Accept: 'text/html' },
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const html = await res.text();
+      // Quick check for sufficient data
+      if (html.length < 5000 || !html.includes('videoId')) continue;
+
+      // Extract all video IDs + nearby titles
+      const matches = Array.from(html.matchAll(/"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"/g));
+      const seen = new Set<string>();
+      const songs: Song[] = [];
+      let idx = 0;
+      for (const m of matches) {
+        const vid = m[1];
+        if (seen.has(vid)) continue;
+        seen.add(vid);
+        const vicinity = html.substring(Math.max(0, (m.index ?? 0) - 50), (m.index ?? 0) + 300);
+        const titleM = vicinity.match(/"text"\s*:\s*"([^"]{3,100})"/);
+        const title = titleM?.[1] ?? `Track ${++idx}`;
+        songs.push({
+          file: vid,
+          title,
+          track: songs.length + 1,
+          src: `https://www.youtube.com/watch?v=${vid}`,
+          videoId: vid,
+          thumbnail: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+        });
+      }
+      if (songs.length > 0) {
+        console.log(`[musicService] Scrape succeeded (${proxy}): ${songs.length} tracks`);
+        return songs;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+/**
+ * Runs in the background after initial load.
+ * If a fresh playlist is fetched, calls `onUpdate` with the refreshed songs.
+ * Does NOT block the UI.
+ */
+export async function refreshYouTubePlaylistInBackground(
+  onUpdate: (songs: Song[]) => void
+): Promise<void> {
+  console.log('[musicService] Background refresh started...');
+  try {
+    const songs = (await tryPiped()) ?? (await tryScrape());
+    if (songs && songs.length > 0) {
+      console.log(`[musicService] Background refresh succeeded: ${songs.length} tracks`);
+      onUpdate(songs);
+    } else {
+      console.log('[musicService] Background refresh found nothing; keeping hardcoded list');
+    }
+  } catch (e) {
+    console.warn('[musicService] Background refresh error:', e);
+  }
 }
