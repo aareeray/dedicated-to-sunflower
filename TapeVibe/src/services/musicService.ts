@@ -29,12 +29,49 @@ export interface Album {
 const PLAYLIST_ID = 'PLVvjnqpET53vBnv5QF78lG9sMMB-ijSUt';
 const PLAYLIST_URL = `https://www.youtube.com/playlist?list=${PLAYLIST_ID}`;
 
-// CORS proxies to try in order
+// CORS proxies for scraping
 const CORS_PROXIES = [
   'https://api.allorigins.win/raw?url=',
   'https://corsproxy.io/?',
   'https://thingproxy.freeboard.io/fetch/',
 ];
+
+// Piped API instances for more reliable fetching
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.leptons.xyz',
+  'https://pipedapi.smnz.de',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.asteriskgaming.ca',
+];
+
+async function fetchPlaylistFromPiped(playlistId: string): Promise<Song[]> {
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      console.log(`[musicService] Trying Piped instance: ${instance}`);
+      const res = await fetch(`${instance}/playlists/${playlistId}`);
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const relatedStreams = data?.relatedStreams ?? [];
+      
+      if (relatedStreams.length > 0) {
+        console.log(`[musicService] Piped instance succeeded: ${instance}`);
+        return relatedStreams.map((item: any, index: number) => ({
+          file: item.url.split('v=')[1] || item.url.split('/').pop() || '',
+          title: item.title,
+          track: index + 1,
+          src: `https://www.youtube.com/watch?v=${item.url.split('v=')[1] || item.url.split('/').pop()}`,
+          videoId: item.url.split('v=')[1] || item.url.split('/').pop() || '',
+          thumbnail: item.thumbnail,
+        }));
+      }
+    } catch (e) {
+      console.warn(`[musicService] Piped instance failed: ${instance}`, e);
+    }
+  }
+  throw new Error('All Piped instances failed');
+}
 
 async function fetchPlaylistPage(): Promise<string> {
   let lastError: Error | null = null;
@@ -180,15 +217,20 @@ function parseYtData(jsonStr: string): Song[] {
 
 export const loadMusicLibrary = async (): Promise<Album[]> => {
   try {
-    console.log('[musicService] Fetching YouTube playlist page...');
-
-    const html = await fetchPlaylistPage();
-    console.log('[musicService] Page fetched, extracting song data...');
-
-    const songs = extractSongsFromHtml(html);
+    console.log('[musicService] Fetching YouTube playlist via Piped API...');
+    
+    let songs: Song[] = [];
+    
+    try {
+      songs = await fetchPlaylistFromPiped(PLAYLIST_ID);
+    } catch (e) {
+      console.warn('[musicService] Piped API failed, falling back to scraping...', e);
+      const html = await fetchPlaylistPage();
+      songs = extractSongsFromHtml(html);
+    }
 
     if (songs.length === 0) {
-      console.warn('[musicService] No songs extracted from playlist page');
+      console.warn('[musicService] No songs extracted from playlist');
       return [];
     }
 
